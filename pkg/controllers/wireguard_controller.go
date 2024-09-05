@@ -21,12 +21,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"strconv"
 	"time"
 
 	"github.com/jodevsa/wireguard-operator/pkg/agent"
 	"github.com/jodevsa/wireguard-operator/pkg/api/v1alpha1"
 
+	"github.com/apparentlymart/go-cidr/cidr"
 	"github.com/korylprince/ipnetgen"
 	wgtypes "golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	appsv1 "k8s.io/api/apps/v1"
@@ -153,14 +155,30 @@ func getAvaialbleIp(cidr string, usedIps []string) (string, error) {
 	return "", fmt.Errorf("no available ip found in %s", cidr)
 }
 
-func (r *WireguardReconciler) getUsedIps(peers *v1alpha1.WireguardPeerList) []string {
-	usedIps := []string{"10.8.0.0", "10.8.0.1"}
-	for _, p := range peers.Items {
-		usedIps = append(usedIps, p.Spec.Address)
-
+func (r *WireguardReconciler) getUsedIps(peers *v1alpha1.WireguardPeerList, vpncidr string) ([]string, error) {
+	var usedIPs []string
+	_, ipNet, err := net.ParseCIDR(vpncidr)
+	if err != nil {
+		return usedIPs, err
 	}
 
-	return usedIps
+	// reserve first and second IP from the network CIDR
+	firstIP, err := cidr.Host(ipNet, 0)
+	if err != nil {
+		return usedIPs, err
+	}
+	usedIPs = append(usedIPs, firstIP.String())
+	secondIP, err := cidr.Host(ipNet, 1)
+	if err != nil {
+		return usedIPs, err
+	}
+	usedIPs = append(usedIPs, secondIP.String())
+
+	for _, p := range peers.Items {
+		usedIPs = append(usedIPs, p.Spec.Address)
+	}
+
+	return usedIPs, nil
 }
 
 func (r *WireguardReconciler) updateWireguardPeers(ctx context.Context, req ctrl.Request, wireguard *v1alpha1.Wireguard, serverAddress string, dns string, dnsSearchDomain string, serverPublicKey string, serverMtu string) error {
@@ -170,11 +188,14 @@ func (r *WireguardReconciler) updateWireguardPeers(ctx context.Context, req ctrl
 		return err
 	}
 
-	usedIps := r.getUsedIps(peers)
+	usedIps, err := r.getUsedIps(peers, wireguard.Spec.VpnCIDR)
+	if err != nil {
+		return err
+	}
 
 	for _, peer := range peers.Items {
 		if peer.Spec.Address == "" {
-			ip, err := getAvaialbleIp("10.8.0.0/24", usedIps)
+			ip, err := getAvaialbleIp(wireguard.Spec.VpnCIDR, usedIps)
 
 			if err != nil {
 				return err

@@ -25,8 +25,9 @@ func (it *Iptables) Sync(state agent.State) error {
 	wgHostName := state.Server.Status.Address
 	dns := state.Server.Status.Dns
 	peers := state.Peers
+	vpnCidr := state.Server.Spec.VpnCIDR
 
-	cfg := GenerateIptableRulesFromPeers(wgHostName, dns, peers)
+	cfg := GenerateIptableRulesFromPeers(wgHostName, dns, peers, vpnCidr)
 
 	err := ApplyRules(cfg)
 
@@ -75,17 +76,17 @@ func GenerateIptableRulesFromNetworkPolicies(policies v1alpha1.EgressNetworkPoli
 	return strings.Join(rules, "\n")
 }
 
-func GenerateIptableRulesFromPeers(wgHostName string, dns string, peers []v1alpha1.WireguardPeer) string {
+func GenerateIptableRulesFromPeers(wgHostName string, dns string, peers []v1alpha1.WireguardPeer, vpnCidr string) string {
 	var rules []string
 
-	var natTableRules = `
+	var natTableRules = fmt.Sprintf(`
 *nat
 :PREROUTING ACCEPT [0:0]
 :INPUT ACCEPT [0:0]
 :OUTPUT ACCEPT [0:0]
 :POSTROUTING ACCEPT [0:0]
--A POSTROUTING -s 10.8.0.0/24 -o eth0 -j MASQUERADE
-COMMIT`
+-A POSTROUTING -s %s -o eth0 -j MASQUERADE
+COMMIT`, vpnCidr)
 
 	for _, peer := range peers {
 
